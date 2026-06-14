@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant
@@ -69,6 +70,13 @@ class BM6DataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict:
         """Fetch data from the BM6 device."""
+        cycle_started = monotonic()
+        interval_seconds = int(self.update_interval.total_seconds())
+        _LOGGER.debug(
+            "BM6 update cycle started for %s (interval=%ss)",
+            self.device_address,
+            interval_seconds,
+        )
         try:
             connector: BM6Connector = BM6Connector(
                 hass=self.hass, address=self.device_address
@@ -83,7 +91,7 @@ class BM6DataUpdateCoordinator(DataUpdateCoordinator):
                 + self.config_entry.data[CONF_TEMPERATURE_OFFSET]
             )
             self._battery.update(data.RealTime, voltage_corrected)
-            return {
+            payload = {
                 KEY_VOLTAGE_DEVICE: data.RealTime.Voltage,
                 KEY_VOLTAGE_CORRECTED: voltage_corrected,
                 KEY_TEMPERATURE_DEVICE: data.RealTime.Temperature,
@@ -107,10 +115,34 @@ class BM6DataUpdateCoordinator(DataUpdateCoordinator):
                 KEY_RAPID_DECELERATION: data.RealTime.RapidDeceleration,
                 KEY_BLUETOOTH_SCANNER: data.Advertisement.Scanner,
             }
+            _LOGGER.debug(
+                "BM6 update cycle finished for %s in %.3fs (scanner=%s, rssi=%s, voltage=%.2f, temp=%s)",
+                self.device_address,
+                monotonic() - cycle_started,
+                payload[KEY_BLUETOOTH_SCANNER],
+                payload[KEY_RSSI],
+                payload[KEY_VOLTAGE_DEVICE],
+                payload[KEY_TEMPERATURE_DEVICE],
+            )
+            return payload
         except BM6DeviceError as e:
+            _LOGGER.debug(
+                "BM6 update cycle failed for %s after %.3fs with %s",
+                self.device_address,
+                monotonic() - cycle_started,
+                e.__class__.__name__,
+                exc_info=True,
+            )
             _LOGGER.error("BM6 device error at %s: %s", self.device_address, e)
             raise UpdateFailed(f"BM6 device error: {e}") from e
         except Exception as e:
+            _LOGGER.debug(
+                "BM6 update cycle failed for %s after %.3fs with %s",
+                self.device_address,
+                monotonic() - cycle_started,
+                e.__class__.__name__,
+                exc_info=True,
+            )
             _LOGGER.error(
                 "Unexpected error while reading BM6 at %s: %s", self.device_address, e
             )
